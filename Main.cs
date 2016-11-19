@@ -20,6 +20,8 @@ static class Program
 		int counter = 1;
 		foreach (XmlNode xnode in xdoc.FirstChild.ChildNodes)
 		{
+			if (xnode.Name == "#comment") continue;
+
 			Model model;
 			string name = xnode.Get<string>("name");
 			Console.WriteLine($"< {name}");
@@ -40,7 +42,11 @@ static class Program
 					if (finished)
 					{
 						Console.WriteLine("DONE");
+
 						model.Graphics().Save($"{counter} {name} {i}.png");
+						if (model is SimpleTiledModel && xnode.Get("textOutput", false))
+							System.IO.File.WriteAllText($"{counter} {name} {i}.txt", (model as SimpleTiledModel).TextOutput());
+
 						break;
 					}
 					else Console.WriteLine("CONTRADICTION");
