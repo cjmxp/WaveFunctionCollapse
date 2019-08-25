@@ -7,16 +7,14 @@ The software is provided "as is", without warranty of any kind, express or impli
 */
 
 using System;
-using System.Xml;
 using System.Linq;
 using System.Drawing;
+using System.Xml.Linq;
 using System.Drawing.Imaging;
 using System.Collections.Generic;
 
 class SimpleTiledModel : Model
 {
-	int[][][] propagator;
-
 	List<Color[]> tiles;
 	List<string> tilenames;
 	int tilesize;
@@ -27,30 +25,26 @@ class SimpleTiledModel : Model
 		this.periodic = periodic;
 		this.black = black;
 
-		var xdoc = new XmlDocument();
-		xdoc.Load($"samples/{name}/data.xml");
-		XmlNode xnode = xdoc.FirstChild;
-		tilesize = xnode.Get("size", 16);
-		bool unique = xnode.Get("unique", false);
-		xnode = xnode.FirstChild;
+		XElement xroot = XDocument.Load($"samples/{name}/data.xml").Root;
+		tilesize = xroot.Get("size", 16);
+		bool unique = xroot.Get("unique", false);
 
 		List<string> subset = null;
 		if (subsetName != default(string))
 		{
-			subset = new List<string>();
-			foreach (XmlNode xsubset in xnode.NextSibling.NextSibling.ChildNodes) 
-				if (xsubset.NodeType != XmlNodeType.Comment && xsubset.Get<string>("name") == subsetName)
-					foreach (XmlNode stile in xsubset.ChildNodes) subset.Add(stile.Get<string>("name"));
+			XElement xsubset = xroot.Element("subsets").Elements("subset").FirstOrDefault(x => x.Get<string>("name") == subsetName);
+			if (xsubset == null) Console.WriteLine($"ERROR: subset {subsetName} is not found");
+			else subset = xsubset.Elements("tile").Select(x => x.Get<string>("name")).ToList();
 		}
 
-		Func<Func<int, int, Color>, Color[]> tile = f =>
+		Color[] tile (Func<int, int, Color> f)
 		{
 			Color[] result = new Color[tilesize * tilesize];
 			for (int y = 0; y < tilesize; y++) for (int x = 0; x < tilesize; x++) result[x + y * tilesize] = f(x, y);
 			return result;
 		};
 
-		Func<Color[], Color[]> rotate = array => tile((x, y) => array[tilesize - 1 - y + x * tilesize]);
+		Color[] rotate(Color[] array) => tile((x, y) => array[tilesize - 1 - y + x * tilesize]);
 
 		tiles = new List<Color[]>();
 		tilenames = new List<string>();
@@ -59,7 +53,7 @@ class SimpleTiledModel : Model
 		List<int[]> action = new List<int[]>();
 		Dictionary<string, int> firstOccurrence = new Dictionary<string, int>();
 
-		foreach (XmlNode xtile in xnode.ChildNodes)
+		foreach (XElement xtile in xroot.Element("tiles").Elements("tile"))
 		{
 			string tilename = xtile.Get<string>("name");
 			if (subset != null && !subset.Contains(tilename)) continue;
@@ -147,10 +141,10 @@ class SimpleTiledModel : Model
 		}
 
 		T = action.Count;
-		stationary = tempStationary.ToArray();
+		weights = tempStationary.ToArray();
 
-		var tempPropagator = new bool[4][][];
 		propagator = new int[4][][];
+		var tempPropagator = new bool[4][][];
 		for (int d = 0; d < 4; d++)
 		{
 			tempPropagator[d] = new bool[T][];
@@ -158,9 +152,7 @@ class SimpleTiledModel : Model
 			for (int t = 0; t < T; t++) tempPropagator[d][t] = new bool[T];
 		}
 
-		for (int x = 0; x < FMX; x++) for (int y = 0; y < FMY; y++) wave[x][y] = new bool[T];
-
-		foreach (XmlNode xneighbor in xnode.NextSibling.ChildNodes)
+		foreach (XElement xneighbor in xroot.Element("neighbors").Elements("neighbor"))
 		{
 			string[] left = xneighbor.Get<string>("left").Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
 			string[] right = xneighbor.Get<string>("right").Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
@@ -207,75 +199,7 @@ class SimpleTiledModel : Model
 			}
 	}
 
-	protected override bool Propagate()
-	{
-		bool change = false, b;
-		for (int x2 = 0; x2 < FMX; x2++) for (int y2 = 0; y2 < FMY; y2++) for (int d = 0; d < 4; d++)
-				{
-					int x1 = x2, y1 = y2;
-					if (d == 0)
-					{
-						if (x2 == 0)
-						{
-							if (!periodic) continue;
-							else x1 = FMX - 1;
-						}
-						else x1 = x2 - 1;
-					}
-					else if (d == 1)
-					{
-						if (y2 == FMY - 1)
-						{
-							if (!periodic) continue;
-							else y1 = 0;
-						}
-						else y1 = y2 + 1;
-					}
-					else if (d == 2)
-					{
-						if (x2 == FMX - 1)
-						{
-							if (!periodic) continue;
-							else x1 = 0;
-						}
-						else x1 = x2 + 1;
-					}
-					else
-					{
-						if (y2 == 0)
-						{
-							if (!periodic) continue;
-							else y1 = FMY - 1;
-						}
-						else y1 = y2 - 1;
-					}
-
-					if (!changes[x1][y1]) continue;
-
-					bool[] w1 = wave[x1][y1];
-					bool[] w2 = wave[x2][y2];
-
-					for (int t2 = 0; t2 < T; t2++)
-					{
-						if (!w2[t2]) continue;
-
-						b = false;
-						int[] prop = propagator[d][t2];
-						for (int i1 = 0; i1 < prop.Length && !b; i1++) b = w1[prop[i1]];
-
-						if (!b)
-						{
-							changes[x2][y2] = true;
-							change = true;
-							w2[t2] = false;
-						}
-					}						
-				}			
-
-		return change;
-	}
-
-	protected override bool OnBoundary(int x, int y) => false;
+	protected override bool OnBoundary(int x, int y) => !periodic && (x < 0 || y < 0 || x >= FMX || y >= FMY);
 
 	public override Bitmap Graphics()
 	{
@@ -286,7 +210,7 @@ class SimpleTiledModel : Model
 		{
 			for (int x = 0; x < FMX; x++) for (int y = 0; y < FMY; y++)
 					{
-						Color[] tile = tiles[observed[x][y]];
+						Color[] tile = tiles[observed[x + y * FMX]];
 						for (int yt = 0; yt < tilesize; yt++) for (int xt = 0; xt < tilesize; xt++)
 							{
 								Color c = tile[xt + yt * tilesize];
@@ -299,9 +223,9 @@ class SimpleTiledModel : Model
 		{
 			for (int x = 0; x < FMX; x++) for (int y = 0; y < FMY; y++)
 				{
-					bool[] a = wave[x][y];
+					bool[] a = wave[x + y * FMX];
 					int amount = (from b in a where b select 1).Sum();
-					double lambda = 1.0 / (from t in Enumerable.Range(0, T) where a[t] select stationary[t]).Sum();
+					double lambda = 1.0 / (from t in Enumerable.Range(0, T) where a[t] select weights[t]).Sum();
 
 					for (int yt = 0; yt < tilesize; yt++) for (int xt = 0; xt < tilesize; xt++)
 						{
@@ -309,12 +233,12 @@ class SimpleTiledModel : Model
 							else
 							{
 								double r = 0, g = 0, b = 0;
-								for (int t = 0; t < T; t++) if (wave[x][y][t])
+								for (int t = 0; t < T; t++) if (a[t])
 									{
 										Color c = tiles[t][xt + yt * tilesize];
-										r += (double)c.R * stationary[t] * lambda;
-										g += (double)c.G * stationary[t] * lambda;
-										b += (double)c.B * stationary[t] * lambda;
+										r += (double)c.R * weights[t] * lambda;
+										g += (double)c.G * weights[t] * lambda;
+										b += (double)c.B * weights[t] * lambda;
 									}
 
 								bitmapData[x * tilesize + xt + (y * tilesize + yt) * FMX * tilesize] =
@@ -337,13 +261,7 @@ class SimpleTiledModel : Model
 
 		for (int y = 0; y < FMY; y++)
 		{
-			for (int x = 0; x < FMX; x++)
-				for (int t = 0; t < T; t++) if (wave[x][y][t])
-					{
-						result.Append($"{tilenames[t]}, ");
-						break;
-					}
-
+			for (int x = 0; x < FMX; x++) result.Append($"{tilenames[observed[x + y * FMX]]}, ");
 			result.Append(Environment.NewLine);
 		}
 
